@@ -41,7 +41,7 @@ jobs:
           sudo LAB_PILLAR=lab_vms PYTHONWARNINGS=ignore salt-call --local --id db1 \
             --file-root=salt --pillar-root=pillar --out=quiet \
             cp.get_template salt://haproxy/files/haproxy.cfg.jinja /tmp/haproxy-vm.cfg
-          haproxy -c -f /tmp/haproxy-vm.cfg
+          sudo haproxy -c -f /tmp/haproxy-vm.cfg
 
   lab:
     name: 3-node Galera cluster + failover drill
