@@ -69,9 +69,10 @@ The trade-off is documented in [docs/RUNBOOK.md](docs/RUNBOOK.md#6-failure-detec
 **Single host** (any Ubuntu 24.04 VM, the same path CI uses):
 
 ```bash
-sudo pip install --break-system-packages "salt==3007.*" pymysql
+sudo python3 -m venv /opt/lab-venv && sudo /opt/lab-venv/bin/pip install "salt==3007.*" pymysql
+sudo ln -sf /opt/lab-venv/bin/salt-call /usr/local/bin/salt-call
 sudo scripts/single_host_lab.sh up
-sudo python3 scripts/failover_drill.py --kill-cmd 'scripts/single_host_lab.sh kill {node}' \
+sudo /opt/lab-venv/bin/python scripts/failover_drill.py --kill-cmd 'scripts/single_host_lab.sh kill {node}' \
   --restart-cmd 'scripts/single_host_lab.sh start {node}' \
   --node db1=127.0.0.1:3311 --node db2=127.0.0.1:3312 --node db3=127.0.0.1:3313
 sudo scripts/single_host_lab.sh down

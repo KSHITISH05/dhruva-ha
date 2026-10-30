@@ -10,10 +10,15 @@ jobs:
     name: Lint + render every Salt state
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Install tools
-        run: sudo pip install --break-system-packages -q "salt==3007.*" ruff
+      - name: Install Salt in a virtualenv (pip can't replace apt-managed packages on Ubuntu 24.04)
+        run: |
+          sudo apt-get install -y -qq python3-venv >/dev/null
+          sudo python3 -m venv /opt/lab-venv
+          sudo /opt/lab-venv/bin/pip install -q "salt==3007.*" pymysql ruff
+          sudo ln -sf /opt/lab-venv/bin/salt-call /usr/local/bin/salt-call
+          sudo ln -sf /opt/lab-venv/bin/ruff /usr/local/bin/ruff
 
       - name: Python lint
         run: ruff check .
@@ -44,7 +49,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Remove the runner's preinstalled MySQL (conflicts with MariaDB)
         run: |
@@ -52,8 +57,13 @@ jobs:
           sudo apt-get purge -y -qq 'mysql-*' >/dev/null
           sudo rm -rf /etc/mysql /var/lib/mysql
 
-      - name: Install Salt and the drill's MySQL driver
-        run: sudo pip install --break-system-packages -q "salt==3007.*" pymysql
+      - name: Install Salt in a virtualenv (pip can't replace apt-managed packages on Ubuntu 24.04)
+        run: |
+          sudo apt-get install -y -qq python3-venv >/dev/null
+          sudo python3 -m venv /opt/lab-venv
+          sudo /opt/lab-venv/bin/pip install -q "salt==3007.*" pymysql ruff
+          sudo ln -sf /opt/lab-venv/bin/salt-call /usr/local/bin/salt-call
+          sudo ln -sf /opt/lab-venv/bin/ruff /usr/local/bin/ruff
 
       - name: Bring the cluster up with Salt (bootstrap db1, db2/db3 join via SST)
         run: sudo scripts/single_host_lab.sh up
@@ -63,7 +73,7 @@ jobs:
 
       - name: Failover drill - SIGKILL the writer, measure, verify, rejoin
         run: |
-          sudo python3 scripts/failover_drill.py --duration 30 --kill-after 8 \
+          sudo /opt/lab-venv/bin/python scripts/failover_drill.py --duration 30 --kill-after 8 \
             --kill-cmd 'scripts/single_host_lab.sh kill {node}' \
             --restart-cmd 'scripts/single_host_lab.sh start {node}' \
             --node db1=127.0.0.1:3311 --node db2=127.0.0.1:3312 --node db3=127.0.0.1:3313 \
@@ -78,7 +88,7 @@ jobs:
         if: failure()
         run: sudo tail -n 60 /srv/galera-lab/*/log/error.log || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: failover-drill
