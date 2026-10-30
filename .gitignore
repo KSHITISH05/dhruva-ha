@@ -1,0 +1,6 @@
+.vagrant/
+*.log
+drill.json
+drill.md
+__pycache__/
+.ruff_cache/

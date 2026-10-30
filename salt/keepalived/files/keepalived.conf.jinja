@@ -1,0 +1,40 @@
+{%- from "galera/map.jinja" import galera with context -%}
+{%- set ka = salt['pillar.get']('keepalived', {}) -%}
+{#- Find the NIC that holds this node's lab address (eth1 / enp0s8 / ... depending on the box). -#}
+{%- set my_ip = galera.nodes[grains['id']].address -%}
+{%- set iface = namespace(name=ka.get('interface', 'eth1')) -%}
+{%- for nic, addrs in grains.get('ip4_interfaces', {}).items() if my_ip in addrs -%}
+{%-   set iface.name = nic -%}
+{%- endfor -%}
+# Managed by Salt (keepalived/files/keepalived.conf.jinja).
+global_defs {
+    router_id {{ grains['id'] }}
+    enable_script_security
+    script_user root
+}
+
+# Give up the VIP if HAProxy dies on this node.
+vrrp_script chk_haproxy {
+    script "/usr/bin/pgrep -x haproxy"
+    interval 2
+    fall 2
+    rise 2
+}
+
+vrrp_instance VI_GALERA {
+    state BACKUP                  # both start as BACKUP; priority decides
+    interface {{ iface.name }}
+    virtual_router_id {{ ka.get('virtual_router_id', 51) }}
+    priority {{ ka.get('priorities', {}).get(grains['id'], 100) }}
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass {{ ka.get('auth_pass', 'galera51') }}
+    }
+    virtual_ipaddress {
+        {{ ka.get('vip') }}
+    }
+    track_script {
+        chk_haproxy
+    }
+}

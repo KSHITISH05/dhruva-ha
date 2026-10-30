@@ -1,0 +1,45 @@
+{%- from "galera/map.jinja" import galera with context %}
+{%- set n = galera.nodes[node] %}
+# Managed by Salt (galera/files/galera.cnf.jinja). Local edits are overwritten.
+# Node: {{ n.name }}  Cluster: {{ galera.cluster_name }}
+{%- set members = [] %}
+{%- for name, m in galera.nodes | dictsort %}
+{%-   do members.append(m.address ~ ':' ~ m.gcomm_port) %}
+{%- endfor %}
+
+[mysqld]
+{%- if galera.single_host %}
+user                     = mysql
+datadir                  = {{ n.datadir }}
+socket                   = {{ n.socket }}
+pid-file                 = {{ n.pidfile }}
+log_error                = {{ n.log_error }}
+{%- endif %}
+bind-address             = {{ n.address }}
+port                     = {{ n.mysql_port }}
+
+# Galera needs row-based replication, InnoDB and interleaved auto-increment locks.
+binlog_format            = ROW
+default_storage_engine   = InnoDB
+innodb_autoinc_lock_mode = 2
+# Durability comes from synchronous replication to the other nodes, so the
+# local fsync on every commit can be relaxed (documented trade-off, see RUNBOOK).
+innodb_flush_log_at_trx_commit = 2
+innodb_buffer_pool_size  = 128M
+
+wsrep_on                 = ON
+wsrep_provider           = /usr/lib/galera/libgalera_smm.so
+wsrep_cluster_name       = {{ galera.cluster_name }}
+wsrep_cluster_address    = gcomm://{{ members | join(',') }}
+wsrep_node_name          = {{ n.name }}
+wsrep_node_address       = {{ n.address }}
+wsrep_node_incoming_address = {{ n.address }}:{{ n.mysql_port }}
+wsrep_sst_method         = {{ galera.sst_method }}
+wsrep_sst_receive_address = {{ n.address }}:{{ n.sst_port }}
+# gcache keeps recent write-sets so a node that was briefly down can rejoin
+# with an incremental transfer (IST) instead of a full copy (SST).
+{%- set opts = ['gmcast.listen_addr=tcp://' ~ n.address ~ ':' ~ n.gcomm_port,
+                 'ist.recv_addr=' ~ n.address ~ ':' ~ n.ist_port,
+                 'gcache.size=256M'] %}
+{%- for k, v in galera.provider_tuning | dictsort %}{% do opts.append(k ~ '=' ~ v) %}{% endfor %}
+wsrep_provider_options   = "{{ opts | join('; ') }}"

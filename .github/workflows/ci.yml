@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint + render every Salt state
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo pip install --break-system-packages -q "salt==3007.*" ruff
+
+      - name: Python lint
+        run: ruff check .
+
+      - name: Shell lint
+        run: shellcheck scripts/*.sh
+
+      - name: Render the VM-lab highstate for every node
+        run: |
+          for id in db1 db2 db3; do
+            echo "::group::$id"
+            sudo LAB_PILLAR=lab_vms PYTHONWARNINGS=ignore salt-call --local --id "$id" --retcode-passthrough \
+              --file-root=salt --pillar-root=pillar --out=quiet state.show_highstate
+            echo "::endgroup::"
+          done
+
+      - name: Validate the rendered VM-lab HAProxy config
+        run: |
+          sudo apt-get install -y -qq haproxy >/dev/null
+          sudo LAB_PILLAR=lab_vms PYTHONWARNINGS=ignore salt-call --local --id db1 \
+            --file-root=salt --pillar-root=pillar --out=quiet \
+            cp.get_template salt://haproxy/files/haproxy.cfg.jinja /tmp/haproxy-vm.cfg
+          haproxy -c -f /tmp/haproxy-vm.cfg
+
+  lab:
+    name: 3-node Galera cluster + failover drill
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove the runner's preinstalled MySQL (conflicts with MariaDB)
+        run: |
+          sudo systemctl stop mysql || true
+          sudo apt-get purge -y -qq 'mysql-*' >/dev/null
+          sudo rm -rf /etc/mysql /var/lib/mysql
+
+      - name: Install Salt and the drill's MySQL driver
+        run: sudo pip install --break-system-packages -q "salt==3007.*" pymysql
+
+      - name: Bring the cluster up with Salt (bootstrap db1, db2/db3 join via SST)
+        run: sudo scripts/single_host_lab.sh up
+
+      - name: Idempotency - a second Salt run must change nothing
+        run: sudo scripts/single_host_lab.sh idempotent
+
+      - name: Failover drill - SIGKILL the writer, measure, verify, rejoin
+        run: |
+          sudo python3 scripts/failover_drill.py --duration 30 --kill-after 8 \
+            --kill-cmd 'scripts/single_host_lab.sh kill {node}' \
+            --restart-cmd 'scripts/single_host_lab.sh start {node}' \
+            --node db1=127.0.0.1:3311 --node db2=127.0.0.1:3312 --node db3=127.0.0.1:3313 \
+            --json-out drill.json --md-out drill.md
+          cat drill.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cluster status
+        if: always()
+        run: sudo scripts/single_host_lab.sh status || true
+
+      - name: Node error logs
+        if: failure()
+        run: sudo tail -n 60 /srv/galera-lab/*/log/error.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failover-drill
+          path: drill.json
+          if-no-files-found: ignore

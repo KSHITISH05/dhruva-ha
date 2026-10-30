@@ -1,0 +1,56 @@
+{%- from "galera/map.jinja" import galera with context -%}
+{%- set hap = salt['pillar.get']('haproxy', {}) -%}
+{%- set writer = hap.get('writer', 'db1') -%}
+# Managed by Salt (haproxy/files/haproxy.cfg.jinja). Local edits are overwritten.
+global
+    log /dev/log local0
+    maxconn 4096
+{%- if galera.single_host %}
+    pidfile {{ galera.lab_root }}/haproxy.pid
+{%- else %}
+    user haproxy
+    group haproxy
+    daemon
+{%- endif %}
+
+defaults
+    mode tcp
+    log global
+    option tcplog
+    option dontlognull
+    timeout connect 3s
+    timeout client 30m
+    timeout server 30m
+    retries 2
+
+# Clients connect here (the keepalived VIP in the VM lab).
+frontend mysql_rw
+    bind {{ hap.get('bind_address', '0.0.0.0') }}:{{ hap.get('port', 3306) }}
+    default_backend galera_single_writer
+
+# Single-writer pattern: every write goes to ONE node; the rest are hot
+# standbys marked `backup`. Writing to several Galera nodes at once works but
+# causes certification conflicts (deadlock errors) on hot rows.
+#
+# Health checks hit galera_health.py on each node, which answers 200 only when
+# the node is Synced, ready and in the Primary component. A plain TCP or
+# mysql-check would happily send traffic to a node that is a blocked SST donor
+# or stuck in a non-primary partition.
+backend galera_single_writer
+    option httpchk GET /
+    http-check expect status 200
+    # Down after 2 failed checks (~2 s). On failover, cut existing sessions so
+    # clients reconnect to the new writer instead of hanging on a dead socket.
+    # When the original writer comes back, cut sessions on the backup so there
+    # is never more than one writer.
+    default-server inter 1s fall 2 rise 3 on-marked-down shutdown-sessions on-marked-up shutdown-backup-sessions
+{%- for name, n in galera.nodes | dictsort %}
+    server {{ name }} {{ n.address }}:{{ n.mysql_port }} check port {{ n.health_port }}{{ '' if name == writer else ' backup' }}
+{%- endfor %}
+
+listen stats
+    bind {{ hap.get('bind_address', '0.0.0.0') }}:{{ hap.get('stats_port', 8404) }}
+    mode http
+    stats enable
+    stats uri /
+    stats refresh 5s

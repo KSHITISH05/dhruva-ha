@@ -1,0 +1,6 @@
+line-length = 120
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "S", "BLE", "PLW", "RUF", "C4"]
+ignore = ["S602", "S603", "S607", "S104"]  # shell=True / binding 0.0.0.0 are intentional in these ops scripts

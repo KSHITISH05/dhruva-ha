@@ -1,0 +1,37 @@
+{#- Merge per-node pillar data with sane defaults so templates stay simple. #}
+{%- set g = salt['pillar.get']('galera', {}) %}
+{%- set single_host = g.get('single_host', False) %}
+{%- set lab_root = g.get('lab_root', '/srv/galera-lab') %}
+{%- set defaults = {
+      'mysql_port': 3306, 'gcomm_port': 4567, 'ist_port': 4568,
+      'sst_port': 4444, 'health_port': 9200, 'bootstrap': False } %}
+{%- set nodes = {} %}
+{%- for name, raw in g.get('nodes', {}) | dictsort %}
+{%-   set n = {} %}
+{%-   do n.update(defaults) %}
+{%-   do n.update(raw) %}
+{%-   do n.update({'name': name}) %}
+{%-   if single_host %}
+{%-     do n.update({
+          'datadir':   lab_root ~ '/' ~ name ~ '/data',
+          'socket':    lab_root ~ '/' ~ name ~ '/run/mysqld.sock',
+          'pidfile':   lab_root ~ '/' ~ name ~ '/run/mysqld.pid',
+          'log_error': lab_root ~ '/' ~ name ~ '/log/error.log',
+          'cnf':       lab_root ~ '/' ~ name ~ '/my.cnf' }) %}
+{%-   else %}
+{%-     do n.update({
+          'datadir':   '/var/lib/mysql',
+          'socket':    '/run/mysqld/mysqld.sock',
+          'pidfile':   '/run/mysqld/mysqld.pid',
+          'log_error': '/var/log/mysql/error.log',
+          'cnf':       '/etc/mysql/mariadb.conf.d/60-galera.cnf' }) %}
+{%-   endif %}
+{%-   do nodes.update({name: n}) %}
+{%- endfor %}
+{%- set galera = {
+      'cluster_name': g.get('cluster_name', 'lab_cluster'),
+      'sst_method': g.get('sst_method', 'rsync'),
+      'provider_tuning': g.get('provider_tuning', {}),
+      'single_host': single_host,
+      'lab_root': lab_root,
+      'nodes': nodes } %}
